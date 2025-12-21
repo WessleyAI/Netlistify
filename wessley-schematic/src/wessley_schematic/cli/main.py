@@ -15,8 +15,10 @@ from rich.console import Console
 from rich.progress import Progress, SpinnerColumn, TextColumn
 from rich.table import Table
 
+from wessley_schematic.schemas.graph import ComponentType
 from wessley_schematic.synthetic.config import (
     GraphGeneratorConfig,
+    HarnessPreset,
     LayoutConfig,
     RenderConfig,
 )
@@ -47,6 +49,12 @@ def generate(
         "--num-samples",
         "-n",
         help="Number of synthetic samples to generate",
+    ),
+    preset: Optional[str] = typer.Option(
+        None,
+        "--preset",
+        "-p",
+        help="Use a preset: tiny, base, or complex (overrides other options)",
     ),
     min_connectors: int = typer.Option(
         2,
@@ -105,6 +113,11 @@ def generate(
 
     Creates a dataset with SVG/PNG images and corresponding label files
     in multiple formats (YOLO, COCO, custom JSON).
+
+    Presets:
+      - tiny: 2-3 connectors, 3-5 wires (quick tests)
+      - base: 4-6 connectors, fuses, grounds, 10-20 wires (typical)
+      - complex: 8-12 connectors, all component types, 30-50 wires (dense)
     """
     output_dir = Path(output_dir)
 
@@ -116,19 +129,28 @@ def generate(
     for d in [images_dir, svgs_dir, labels_dir]:
         d.mkdir(parents=True, exist_ok=True)
 
-    # Create configs
-    gen_config = GraphGeneratorConfig(
-        min_connectors=min_connectors,
-        max_connectors=max_connectors,
-        min_wires=min_wires,
-        max_wires=max_wires,
-        allow_fuses=allow_fuses,
-        allow_relays=allow_relays,
-        allow_splices=allow_splices,
-        allow_ecus=allow_ecus,
-        allow_grounds=allow_grounds,
-        seed=seed,
-    )
+    # Create config - use preset if specified
+    if preset:
+        try:
+            harness_preset = HarnessPreset(preset.lower())
+            gen_config = GraphGeneratorConfig.from_preset(harness_preset, seed=seed)
+            console.print(f"[bold]Using preset: {preset}[/bold]")
+        except ValueError:
+            console.print(f"[red]Unknown preset: {preset}. Use: tiny, base, or complex[/red]")
+            raise typer.Exit(1)
+    else:
+        gen_config = GraphGeneratorConfig(
+            min_connectors=min_connectors,
+            max_connectors=max_connectors,
+            min_wires=min_wires,
+            max_wires=max_wires,
+            allow_fuses=allow_fuses,
+            allow_relays=allow_relays,
+            allow_splices=allow_splices,
+            allow_ecus=allow_ecus,
+            allow_grounds=allow_grounds,
+            seed=seed,
+        )
 
     layout_config = LayoutConfig()
 
@@ -326,6 +348,93 @@ def inspect_one(
             f"\n[bold]Connected:[/bold] {'Yes' if harness.is_connected() else 'No'}"
         )
         console.print()
+
+
+@app.command()
+def stats(
+    dataset_dir: Path = typer.Argument(
+        ...,
+        help="Path to dataset directory (containing labels/ folder)",
+    ),
+) -> None:
+    """
+    Print statistics about a generated dataset.
+
+    Analyzes the label files to show:
+    - Number of samples
+    - Average connectors/wires per sample
+    - Distribution of component types
+    """
+    dataset_dir = Path(dataset_dir)
+    labels_dir = dataset_dir / "labels"
+
+    if not labels_dir.exists():
+        console.print(f"[red]Labels directory not found: {labels_dir}[/red]")
+        raise typer.Exit(1)
+
+    # Find all graph.json files
+    graph_files = sorted(labels_dir.glob("*.graph.json"))
+
+    if not graph_files:
+        console.print(f"[red]No graph.json files found in {labels_dir}[/red]")
+        raise typer.Exit(1)
+
+    # Collect statistics
+    total_samples = len(graph_files)
+    total_connectors = 0
+    total_wires = 0
+    total_pins = 0
+    component_counts: dict[str, int] = {}
+
+    for graph_file in graph_files:
+        with open(graph_file) as f:
+            data = json.load(f)
+
+        wires = data.get("wires", [])
+        total_wires += len(wires)
+
+        for comp in data.get("components", []):
+            comp_type = comp.get("type", "unknown")
+            component_counts[comp_type] = component_counts.get(comp_type, 0) + 1
+
+            if comp_type == "connector":
+                total_connectors += 1
+
+            total_pins += len(comp.get("pins", []))
+
+    # Print results
+    console.print(f"\n[bold blue]Dataset Statistics: {dataset_dir}[/bold blue]\n")
+
+    summary_table = Table(title="Summary")
+    summary_table.add_column("Metric", style="cyan")
+    summary_table.add_column("Value", style="green", justify="right")
+
+    summary_table.add_row("Total samples", str(total_samples))
+    summary_table.add_row("Avg connectors/sample", f"{total_connectors / total_samples:.1f}")
+    summary_table.add_row("Avg wires/sample", f"{total_wires / total_samples:.1f}")
+    summary_table.add_row("Avg pins/sample", f"{total_pins / total_samples:.1f}")
+
+    console.print(summary_table)
+
+    # Component type distribution
+    dist_table = Table(title="\nComponent Type Distribution")
+    dist_table.add_column("Type", style="cyan")
+    dist_table.add_column("Total", style="green", justify="right")
+    dist_table.add_column("Avg/Sample", style="yellow", justify="right")
+    dist_table.add_column("% of Total", style="magenta", justify="right")
+
+    total_components = sum(component_counts.values())
+    for comp_type in sorted(component_counts.keys()):
+        count = component_counts[comp_type]
+        dist_table.add_row(
+            comp_type,
+            str(count),
+            f"{count / total_samples:.1f}",
+            f"{100 * count / total_components:.1f}%",
+        )
+
+    console.print(dist_table)
+    console.print()
 
 
 @app.command()

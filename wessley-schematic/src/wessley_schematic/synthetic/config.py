@@ -2,7 +2,18 @@
 Configuration for synthetic harness graph generation.
 """
 
+from enum import Enum
+from typing import ClassVar
+
 from pydantic import BaseModel, Field, field_validator
+
+
+class HarnessPreset(str, Enum):
+    """Predefined harness complexity presets."""
+
+    TINY = "tiny"  # 2-3 connectors, 3-5 wires - for quick tests
+    BASE = "base"  # 4-6 connectors, fuses, grounds, 10-20 wires - typical diagram
+    COMPLEX = "complex"  # 8-12 connectors, splices, relays, 30-50 wires - dense diagram
 
 
 class GraphGeneratorConfig(BaseModel):
@@ -113,6 +124,71 @@ class GraphGeneratorConfig(BaseModel):
                 f"max_pins_per_ecu ({v}) must be >= min_pins_per_ecu ({min_val})"
             )
         return v
+
+    @classmethod
+    def from_preset(cls, preset: HarnessPreset, seed: int | None = None) -> "GraphGeneratorConfig":
+        """
+        Create a configuration from a predefined preset.
+
+        Args:
+            preset: The harness complexity preset
+            seed: Optional random seed
+
+        Returns:
+            GraphGeneratorConfig configured for the preset
+        """
+        configs = {
+            HarnessPreset.TINY: {
+                "min_connectors": 2,
+                "max_connectors": 3,
+                "min_wires": 3,
+                "max_wires": 5,
+                "allow_fuses": False,
+                "allow_relays": False,
+                "allow_splices": False,
+                "allow_ecus": False,
+                "allow_grounds": True,
+                "max_grounds": 1,
+                "min_pins_per_connector": 2,
+                "max_pins_per_connector": 4,
+            },
+            HarnessPreset.BASE: {
+                "min_connectors": 4,
+                "max_connectors": 6,
+                "min_wires": 10,
+                "max_wires": 20,
+                "allow_fuses": True,
+                "allow_relays": False,
+                "allow_splices": False,
+                "allow_ecus": False,
+                "allow_grounds": True,
+                "max_fuses": 2,
+                "max_grounds": 2,
+                "min_pins_per_connector": 2,
+                "max_pins_per_connector": 6,
+            },
+            HarnessPreset.COMPLEX: {
+                "min_connectors": 8,
+                "max_connectors": 12,
+                "min_wires": 30,
+                "max_wires": 50,
+                "allow_fuses": True,
+                "allow_relays": True,
+                "allow_splices": True,
+                "allow_ecus": True,
+                "allow_grounds": True,
+                "max_fuses": 4,
+                "max_relays": 3,
+                "max_splices": 4,
+                "max_ecus": 2,
+                "max_grounds": 4,
+                "min_pins_per_connector": 3,
+                "max_pins_per_connector": 10,
+                "min_pins_per_ecu": 6,
+                "max_pins_per_ecu": 16,
+            },
+        }
+        return cls(seed=seed, **configs[preset])
 
 
 class LayoutConfig(BaseModel):
