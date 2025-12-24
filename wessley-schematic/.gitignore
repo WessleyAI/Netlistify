@@ -1,7 +1,16 @@
 # Generated datasets
 dataset/
+dataset_*/
 *.png
 *.svg
+
+# ML training artifacts
+ml/runs/
+ml/dataset_yolo/
+ml/visualizations/
+ml/comparisons/
+*.pt
+*.onnx
 
 # Python
 __pycache__/
